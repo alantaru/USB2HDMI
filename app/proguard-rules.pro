@@ -93,13 +93,17 @@
 }
 
 # --- Application Specific ---
-# Keep application classes used in AndroidManifest.xml
+# Keep application classes used in AndroidManifest.xml (redundante com regra abaixo, mas seguro)
 -keep public class * extends android.app.Activity
 -keep public class * extends android.app.Application
 -keep public class * extends android.app.Service
 -keep public class * extends android.content.BroadcastReceiver
 -keep public class * extends android.content.ContentProvider
 -keep public class * extends android.view.View
+
+# Keep ALL classes in our application package (mais abrangente)
+-keep class com.perfectcorp.usb2hdmi.** { *; }
+-keep interface com.perfectcorp.usb2hdmi.** { *; }
 
 # Keep Parcelable implementations
 -keep class * implements android.os.Parcelable {
@@ -136,6 +140,3 @@
 -keepclasseswithmembers class * {
     public <init>(android.content.Context, android.util.AttributeSet, int);
 }
-
-# Keep our specific model classes if needed (usually covered by Parcelable or other rules)
-# -keep class com.perfectcorp.usb2hdmi.data.model.** { *; }
