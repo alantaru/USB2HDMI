@@ -10,7 +10,6 @@ plugins {
 android {
     namespace = "com.perfectcorp.usb2hdmi" // Ajuste conforme necessário
     compileSdk = 34
-    compileSdkPreview = null // ADICIONADO: Garantir que não use preview
 
     defaultConfig {
         applicationId = "com.perfectcorp.usb2hdmi" // Ajuste conforme necessário
@@ -27,7 +26,7 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled = true
+            minifyEnabled = false // MODIFICADO: Desabilitado para diagnóstico
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
