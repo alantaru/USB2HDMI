@@ -16,19 +16,26 @@ import com.perfectcorp.usb2hdmi.data.model.ConnectionStatus
 import com.perfectcorp.usb2hdmi.data.model.Resolution
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+// import kotlinx.coroutines.flow.distinctUntilChanged // REMOVIDO
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // Constante para Logging
 private const val TAG = "ConnectionRepository"
 private const val DEFAULT_DISPLAY_ID = 0 // WORKAROUND
+private const val POLLING_INTERVAL_MS = 2000L // Verificar displays a cada 2 segundos
 
 @SuppressLint("WrongConstant")
 class ConnectionRepository(
@@ -57,32 +64,28 @@ class ConnectionRepository(
     private var displayListener: DisplayManager.DisplayListener? = null
     private var usbReceiver: BroadcastReceiver? = null
     private var isUsbDeviceAttached = false
+    private var pollingJob: Job? = null // Job para controlar a coroutine de polling
 
     init {
         registerDisplayListener()
         registerUsbReceiver()
+        observeConnectionStatusForPolling() // Iniciar observador para polling
         updateConnectionStatus() // Verificar estado inicial
     }
 
     // --- Display Listener Logic ---
     private fun registerDisplayListener() {
         if (displayListener != null) return
-
         displayListener = object : DisplayManager.DisplayListener {
             override fun onDisplayAdded(displayId: Int) {
-                // LOG ADICIONADO
                 Log.i(TAG, "*** DisplayListener: onDisplayAdded(displayId=$displayId)")
                 updateConnectionStatus()
             }
-
             override fun onDisplayRemoved(displayId: Int) {
-                // LOG ADICIONADO
                 Log.i(TAG, "*** DisplayListener: onDisplayRemoved(displayId=$displayId)")
                 updateConnectionStatus()
             }
-
             override fun onDisplayChanged(displayId: Int) {
-                // LOG ADICIONADO
                 Log.i(TAG, "*** DisplayListener: onDisplayChanged(displayId=$displayId)")
                 updateConnectionStatus()
             }
@@ -102,36 +105,40 @@ class ConnectionRepository(
     // --- USB Receiver Logic ---
     private fun registerUsbReceiver() {
         if (usbReceiver != null) return
-
         usbReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 val action = intent.action
                 val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                // LOG ADICIONADO
                 Log.i(TAG, "*** UsbReceiver: onReceive(action=$action, device=${device?.deviceName}, VID=${device?.vendorId}, PID=${device?.productId})")
 
+                var shouldUpdate = false
                 when (action) {
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                        // TODO: Verificar VID/PID do H'Maston
-                        if (isSpecificAdapterAttachedBlocking(device)) { // Usar versão bloqueante aqui
+                        if (isSpecificAdapterAttachedBlocking(device)) {
                             Log.i(TAG, "Adaptador USB específico conectado.")
-                            isUsbDeviceAttached = true
+                            if (!isUsbDeviceAttached) {
+                                isUsbDeviceAttached = true
+                                shouldUpdate = true
+                            }
+                            shouldUpdate = true // Sempre reavaliar
                         } else {
                             Log.d(TAG, "Outro dispositivo USB conectado, ignorando.")
                         }
-                        // CHAMADA EXTRA ADICIONADA: Reavaliar status mesmo se já estava conectado
-                        updateConnectionStatus()
                     }
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                        // TODO: Verificar VID/PID do H'Maston
-                        if (isSpecificAdapterAttachedBlocking(device)) { // Usar versão bloqueante aqui
+                        if (isSpecificAdapterAttachedBlocking(device)) {
                              Log.i(TAG, "Adaptador USB específico desconectado.")
-                             isUsbDeviceAttached = false
-                             updateConnectionStatus() // Reavaliar status
+                             if (isUsbDeviceAttached) {
+                                 isUsbDeviceAttached = false
+                                 shouldUpdate = true
+                             }
                         } else {
                              Log.d(TAG, "Outro dispositivo USB desconectado, ignorando.")
                         }
                     }
+                }
+                if (shouldUpdate) {
+                    updateConnectionStatus()
                 }
             }
         }
@@ -148,10 +155,15 @@ class ConnectionRepository(
      private fun checkInitialUsbState() {
          externalScope.launch(Dispatchers.IO) {
              val deviceList = usbManager.deviceList
-             isUsbDeviceAttached = deviceList.values.any { isSpecificAdapterAttachedBlocking(it) }
-             Log.d(TAG, "Estado inicial USB verificado: isUsbDeviceAttached=$isUsbDeviceAttached")
-             // Chamar updateConnectionStatus aqui pode ser útil após a verificação inicial
-             updateConnectionStatus()
+             val adapterAttached = deviceList.values.any { isSpecificAdapterAttachedBlocking(it) }
+             if (adapterAttached != isUsbDeviceAttached) {
+                 isUsbDeviceAttached = adapterAttached
+                 Log.d(TAG, "Estado inicial USB verificado: isUsbDeviceAttached=$isUsbDeviceAttached")
+                 updateConnectionStatus()
+             } else {
+                 Log.d(TAG, "Estado inicial USB verificado (sem mudança): isUsbDeviceAttached=$isUsbDeviceAttached")
+                 updateConnectionStatus()
+             }
          }
      }
 
@@ -167,18 +179,16 @@ class ConnectionRepository(
         }
     }
 
-    // --- Connection Status Update Logic (Refatorado) ---
+    // --- Connection Status Update Logic ---
     private fun updateConnectionStatus() {
         externalScope.launch(Dispatchers.IO) {
-            // LOG ADICIONADO
             Log.d(TAG, "==> updateConnectionStatus chamado. isUsbAttached=$isUsbDeviceAttached")
             try {
                 val displays = displayManager.displays
-                // LOG ADICIONADO
                 val displayInfo = displays.joinToString { "ID=${it.displayId}, Name=${it.name}, Valid=${it.isValid}" }
                 Log.d(TAG, "Displays encontrados: [${displayInfo}]")
 
-                val externalDisplay = displays.find { it.displayId != DEFAULT_DISPLAY_ID && it.isValid } // Adicionado isValid
+                val externalDisplay = displays.find { it.displayId != DEFAULT_DISPLAY_ID && it.isValid }
 
                 val currentStatus = _connectionStatus.value
                 val newStatus: ConnectionStatus
@@ -214,9 +224,44 @@ class ConnectionRepository(
         }
     }
 
+    // --- Polling Logic ---
+    private fun observeConnectionStatusForPolling() {
+        connectionStatus
+            // .distinctUntilChanged() // REMOVIDO: Redundante para StateFlow
+            .onEach { status ->
+                if (status == ConnectionStatus.ADAPTER_CONNECTED) {
+                    startPollingForDisplay()
+                } else {
+                    stopPollingForDisplay()
+                }
+            }
+            .launchIn(externalScope)
+    }
+
+    private fun startPollingForDisplay() {
+        if (pollingJob?.isActive == true) return
+        Log.i(TAG, "Iniciando polling para display externo...")
+        pollingJob = externalScope.launch(Dispatchers.IO) {
+            while (isActive && _connectionStatus.value == ConnectionStatus.ADAPTER_CONNECTED) {
+                Log.d(TAG, "Polling: Verificando displays...")
+                updateConnectionStatus()
+                delay(POLLING_INTERVAL_MS)
+            }
+            Log.i(TAG, "Polling para display externo parado (status mudou ou job cancelado).")
+        }
+    }
+
+    private fun stopPollingForDisplay() {
+        if (pollingJob?.isActive == true) {
+            Log.i(TAG, "Cancelando polling para display externo.")
+            pollingJob?.cancel()
+        }
+        pollingJob = null
+    }
+
+
     // --- Resolution Update Logic ---
     private suspend fun updateAvailableResolutions(display: Display) = withContext(Dispatchers.IO) {
-        // ... (código existente sem alterações) ...
         try {
             val modes = display.supportedModes.mapNotNull { mode ->
                 if (mode.physicalWidth > 0 && mode.physicalHeight > 0) {
@@ -238,6 +283,7 @@ class ConnectionRepository(
     // --- Cleanup ---
     fun cleanup() {
         Log.d(TAG, "Limpando ConnectionRepository...")
+        stopPollingForDisplay()
         unregisterDisplayListener()
         unregisterUsbReceiver()
     }
@@ -248,7 +294,6 @@ class ConnectionRepository(
     }
 
     // --- USB Detection ---
-    // Versão bloqueante para uso dentro do BroadcastReceiver
     private fun isSpecificAdapterAttachedBlocking(device: UsbDevice?): Boolean {
         if (device == null) return false
         // TODO: Implementar verificação de Vendor ID (VID) e Product ID (PID)
