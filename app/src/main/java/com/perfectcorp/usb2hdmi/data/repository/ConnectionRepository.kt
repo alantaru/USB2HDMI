@@ -1,17 +1,17 @@
 package com.perfectcorp.usb2hdmi.data.repository
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.display.DisplayManager
-// import android.hardware.display.DisplayManager.DEFAULT_DISPLAY // Mantendo comentado devido a erro persistente
-import android.hardware.display.VirtualDisplay
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
-import android.util.DisplayMetrics
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.util.Log
 import android.view.Display
-import com.perfectcorp.usb2hdmi.R // Importar R para string resources
+import androidx.core.content.ContextCompat // Para registrar receiver
+import com.perfectcorp.usb2hdmi.R
 import com.perfectcorp.usb2hdmi.data.model.ConnectionStatus
 import com.perfectcorp.usb2hdmi.data.model.Resolution
 import kotlinx.coroutines.CoroutineScope
@@ -28,17 +28,15 @@ import kotlinx.coroutines.withContext
 
 // Constante para Logging
 private const val TAG = "ConnectionRepository"
-private const val VIRTUAL_DISPLAY_NAME = "USB2HDMIProjection"
-private const val DEFAULT_DISPLAY_ID = 0 // WORKAROUND: Usar ID 0 explicitamente
+private const val DEFAULT_DISPLAY_ID = 0 // WORKAROUND
 
 /**
- * Repositório responsável por gerenciar a detecção da conexão USB-C/HDMI,
- * o estado da projeção de mídia (MediaProjection) e informações das telas.
- *
- * Interage com DisplayManager, MediaProjectionManager e potencialmente UsbManager.
+ * Repositório responsável por detectar o estado da conexão USB-C/HDMI
+ * e informações das telas, usando DisplayManager e UsbManager.
+ * Não gerencia mais MediaProjection diretamente.
  *
  * @param context Contexto da aplicação para acessar serviços do sistema.
- * @param externalScope CoroutineScope para operações de longa duração ou que precisam sobreviver ao ViewModel.
+ * @param externalScope CoroutineScope para operações de longa duração.
  */
 @SuppressLint("WrongConstant")
 class ConnectionRepository(
@@ -47,7 +45,7 @@ class ConnectionRepository(
 ) {
 
     private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-    private val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
 
     // --- State Flows ---
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.DISCONNECTED)
@@ -56,29 +54,32 @@ class ConnectionRepository(
     private val _availableResolutions = MutableStateFlow<List<Resolution>>(emptyList())
     val availableResolutions: StateFlow<List<Resolution>> = _availableResolutions.asStateFlow()
 
-    private val _currentResolution = MutableStateFlow<Resolution?>(null)
-    val currentResolution: StateFlow<Resolution?> = _currentResolution.asStateFlow()
+    // Não precisamos mais expor a resolução atual, o serviço pode gerenciar isso internamente se necessário
+    // private val _currentResolution = MutableStateFlow<Resolution?>(null)
+    // val currentResolution: StateFlow<Resolution?> = _currentResolution.asStateFlow()
 
     // --- Event Flow for Errors ---
     private val _errorEvents = MutableSharedFlow<String>(
-        extraBufferCapacity = 1, // Buffer para garantir que o último erro seja observado
+        extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val errorEvents: SharedFlow<String> = _errorEvents.asSharedFlow()
 
-
     // --- Internal State ---
-    private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
     private var displayListener: DisplayManager.DisplayListener? = null
+    private var usbReceiver: BroadcastReceiver? = null
+    private var isUsbDeviceAttached = false // Flag para rastrear estado USB
 
     init {
         registerDisplayListener()
+        registerUsbReceiver()
+        // Verificar estado inicial combinando informações de USB e Display
         updateConnectionStatus()
     }
 
     // --- Display Listener Logic ---
     private fun registerDisplayListener() {
+        // ... (código existente sem alterações) ...
         if (displayListener != null) return
 
         displayListener = object : DisplayManager.DisplayListener {
@@ -89,12 +90,7 @@ class ConnectionRepository(
 
             override fun onDisplayRemoved(displayId: Int) {
                 Log.d(TAG, "Display Removido: $displayId")
-                if (_connectionStatus.value == ConnectionStatus.TRANSMITTING && virtualDisplay?.display?.displayId == displayId) {
-                    Log.w(TAG, "Display da projeção ativa foi removido. Parando projeção.")
-                    stopProjectionInternal()
-                    // Emitir evento informativo?
-                    // emitError("Monitor desconectado.") // Ou deixar updateConnectionStatus tratar
-                }
+                // A lógica de parar projeção agora é responsabilidade externa (Serviço/ViewModel)
                 updateConnectionStatus()
             }
 
@@ -108,6 +104,7 @@ class ConnectionRepository(
     }
 
     private fun unregisterDisplayListener() {
+        // ... (código existente sem alterações) ...
         displayListener?.let {
             displayManager.unregisterDisplayListener(it)
             displayListener = null
@@ -115,7 +112,67 @@ class ConnectionRepository(
         }
     }
 
-    // --- Connection Status Update Logic ---
+    // --- USB Receiver Logic ---
+    private fun registerUsbReceiver() {
+        if (usbReceiver != null) return
+
+        usbReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                when (intent.action) {
+                    UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                        val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                        Log.d(TAG, "USB Device Attached: $device")
+                        // TODO: Verificar se o device é o adaptador H'Maston (Vendor/Product ID)
+                        isUsbDeviceAttached = true // Simplificação inicial
+                        updateConnectionStatus()
+                    }
+                    UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                        val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                        Log.d(TAG, "USB Device Detached: $device")
+                        // TODO: Verificar se era o adaptador H'Maston
+                        isUsbDeviceAttached = false // Simplificação inicial
+                        updateConnectionStatus()
+                    }
+                }
+            }
+        }
+
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        // Registrar receiver com contexto e flags apropriadas
+        ContextCompat.registerReceiver(context, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+
+        // Verificar estado inicial do USB (dispositivos já conectados)
+        checkInitialUsbState()
+        Log.d(TAG, "UsbReceiver registrado.")
+    }
+
+     private fun checkInitialUsbState() {
+         externalScope.launch(Dispatchers.IO) {
+             val deviceList = usbManager.deviceList
+             // TODO: Iterar e verificar se algum dispositivo conectado é o adaptador H'Maston
+             isUsbDeviceAttached = deviceList.isNotEmpty() // Simplificação MUITO básica
+             Log.d(TAG, "Estado inicial USB verificado: isUsbDeviceAttached=$isUsbDeviceAttached")
+             // Não chamar updateConnectionStatus aqui diretamente para evitar race condition com display listener inicial
+         }
+     }
+
+
+    private fun unregisterUsbReceiver() {
+        usbReceiver?.let {
+            try {
+                context.unregisterReceiver(it)
+                usbReceiver = null
+                Log.d(TAG, "UsbReceiver desregistrado.")
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "UsbReceiver já estava desregistrado ou nunca foi registrado.")
+            }
+        }
+    }
+
+    // --- Connection Status Update Logic (Refatorado) ---
     private fun updateConnectionStatus() {
         externalScope.launch(Dispatchers.IO) {
             try {
@@ -123,37 +180,37 @@ class ConnectionRepository(
                 val externalDisplay = displays.find { it.displayId != DEFAULT_DISPLAY_ID }
 
                 val currentStatus = _connectionStatus.value
-                var newStatus: ConnectionStatus
+                val newStatus: ConnectionStatus
 
                 if (externalDisplay != null) {
-                    Log.d(TAG, "Monitor externo detectado: ID=${externalDisplay.displayId}, Nome=${externalDisplay.name}")
+                    // Se um display externo está visível, consideramos pronto ou transmitindo (depende do serviço)
+                    Log.d(TAG, "Monitor externo detectado: ID=${externalDisplay.displayId}")
                     updateAvailableResolutions(externalDisplay)
+                    // O estado TRANSMITTING agora é gerenciado externamente.
+                    // Se o display existe, está pelo menos pronto.
+                    newStatus = ConnectionStatus.READY_TO_TRANSMIT
+                    // Poderíamos tentar inferir TRANSMITTING se soubéssemos que o serviço está rodando,
+                    // mas é mais seguro deixar o ViewModel/Serviço gerenciar isso.
 
-                    newStatus = if (mediaProjection != null && virtualDisplay != null) {
-                        updateCurrentResolution(externalDisplay)
-                        ConnectionStatus.TRANSMITTING
-                    } else {
-                        ConnectionStatus.READY_TO_TRANSMIT
-                    }
                 } else {
-                    Log.d(TAG, "Nenhum monitor externo detectado.")
-                    _availableResolutions.value = emptyList()
-                    _currentResolution.value = null
-
-                    if (virtualDisplay != null) {
-                        Log.w(TAG, "Display externo sumiu enquanto projeção estava ativa. Parando internamente.")
-                        withContext(Dispatchers.Main) { stopProjectionInternal() }
+                    // Sem display externo. Verificar se o adaptador USB está conectado.
+                    if (isUsbDeviceAttached) {
+                         Log.d(TAG, "Adaptador USB detectado, mas sem monitor externo.")
+                         newStatus = ConnectionStatus.ADAPTER_CONNECTED
+                    } else {
+                         Log.d(TAG, "Nenhum adaptador USB ou monitor externo detectado.")
+                         newStatus = ConnectionStatus.DISCONNECTED
                     }
-                    // TODO: Implementar detecção do adaptador USB para diferenciar DISCONNECTED de ADAPTER_CONNECTED
-                    newStatus = ConnectionStatus.DISCONNECTED
+                    // Limpar resoluções se não há display externo
+                    _availableResolutions.value = emptyList()
                 }
 
                 if (currentStatus != newStatus) {
                     Log.i(TAG, "Mudança de Status: $currentStatus -> $newStatus")
                     _connectionStatus.value = newStatus
-                } else if (newStatus == ConnectionStatus.TRANSMITTING && externalDisplay != null) {
-                    updateCurrentResolution(externalDisplay)
                 }
+                // Não precisamos mais atualizar _currentResolution aqui
+
             } catch (e: Exception) {
                 Log.e(TAG, "Erro ao atualizar status da conexão", e)
                 _connectionStatus.value = ConnectionStatus.ERROR
@@ -164,6 +221,7 @@ class ConnectionRepository(
 
     // --- Resolution Update Logic ---
     private suspend fun updateAvailableResolutions(display: Display) = withContext(Dispatchers.IO) {
+        // ... (código existente sem alterações) ...
         try {
             val modes = display.supportedModes.mapNotNull { mode ->
                 if (mode.physicalWidth > 0 && mode.physicalHeight > 0) {
@@ -179,175 +237,26 @@ class ConnectionRepository(
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao obter modos suportados para Display ${display.displayId}", e)
             _availableResolutions.value = emptyList()
-            // Não emitir erro aqui necessariamente, pode ser normal não ter modos
         }
     }
 
-    private suspend fun updateCurrentResolution(display: Display) = withContext(Dispatchers.IO) {
-        try {
-            val currentMode = display.mode
-            val resolution = if (currentMode.physicalWidth > 0 && currentMode.physicalHeight > 0) {
-                Resolution(currentMode.physicalWidth, currentMode.physicalHeight, currentMode.refreshRate.toInt())
-            } else null
+    // Não precisamos mais desta função aqui
+    // private suspend fun updateCurrentResolution(display: Display) = ...
 
-            if (_currentResolution.value != resolution) {
-                Log.d(TAG, "Resolução atual para Display ${display.displayId}: $resolution")
-                _currentResolution.value = resolution
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Erro ao obter modo atual para Display ${display.displayId}", e)
-            _currentResolution.value = null
-            // Não emitir erro aqui necessariamente
-        }
-    }
-
-    // --- Media Projection Logic ---
-    fun createScreenCaptureIntent(): Intent {
-        return mediaProjectionManager.createScreenCaptureIntent()
-    }
-
-    fun startProjection(resultCode: Int, resultData: Intent, targetResolution: Resolution?) {
-        externalScope.launch(Dispatchers.Main) {
-            if (mediaProjection != null || virtualDisplay != null) {
-                Log.w(TAG, "Tentativa de iniciar projeção quando já existe uma ativa.")
-                return@launch
-            }
-
-            Log.i(TAG, "Iniciando projeção...")
-            try {
-                mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, resultData)
-            } catch (e: Exception) {
-                 Log.e(TAG, "Falha ao obter MediaProjection (exceção)", e)
-                 _connectionStatus.value = ConnectionStatus.ERROR
-                 emitError(context.getString(R.string.error_failed_to_get_permission)) // Mensagem genérica de permissão
-                 return@launch
-            }
-
-
-            if (mediaProjection == null) {
-                Log.e(TAG, "Falha ao obter MediaProjection (retornou null).")
-                _connectionStatus.value = ConnectionStatus.ERROR
-                emitError(context.getString(R.string.error_failed_to_get_permission))
-                return@launch
-            }
-
-            mediaProjection?.registerCallback(mediaProjectionCallback, null)
-
-            val externalDisplay = displayManager.displays.find { it.displayId != DEFAULT_DISPLAY_ID }
-            if (externalDisplay == null) {
-                Log.e(TAG, "Display externo desapareceu antes de iniciar VirtualDisplay.")
-                stopProjectionInternal()
-                updateConnectionStatus() // Reavalia status
-                emitError("Monitor externo desconectado inesperadamente.") // Mensagem mais específica
-                return@launch
-            }
-
-            val width = targetResolution?.width ?: externalDisplay.mode.physicalWidth
-            val height = targetResolution?.height ?: externalDisplay.mode.physicalHeight
-            val metrics = DisplayMetrics()
-            val defaultDisplay = displayManager.getDisplay(DEFAULT_DISPLAY_ID)
-            if (defaultDisplay != null) {
-                 defaultDisplay.getMetrics(metrics)
-            } else {
-                 Log.e(TAG, "Não foi possível obter o display padrão (ID 0) para métricas.")
-                 externalDisplay.getMetrics(metrics) // Fallback
-            }
-            val densityDpi = metrics.densityDpi
-            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
-
-            Log.d(TAG, "Criando VirtualDisplay: ${width}x${height} @ ${densityDpi}dpi, Flags=$flags")
-
-            try {
-                virtualDisplay = mediaProjection?.createVirtualDisplay(
-                    VIRTUAL_DISPLAY_NAME, width, height, densityDpi, flags,
-                    null, virtualDisplayCallback, null
-                )
-
-                if (virtualDisplay == null) {
-                    Log.e(TAG, "Falha ao criar VirtualDisplay (retornou null).")
-                    stopProjectionInternal()
-                    _connectionStatus.value = ConnectionStatus.ERROR
-                    emitError("Falha ao iniciar a transmissão para o monitor.")
-                } else {
-                    Log.i(TAG, "VirtualDisplay criado com sucesso no Display ID: ${virtualDisplay?.display?.displayId}")
-                    _connectionStatus.value = ConnectionStatus.TRANSMITTING
-                    updateCurrentResolution(externalDisplay)
-                }
-            } catch (e: SecurityException) {
-                Log.e(TAG, "Erro de segurança ao criar VirtualDisplay. Permissão revogada?", e)
-                stopProjectionInternal()
-                _connectionStatus.value = ConnectionStatus.ERROR
-                emitError("Erro de segurança ao iniciar transmissão. Verifique as permissões.")
-            } catch (e: Exception) {
-                Log.e(TAG, "Erro inesperado ao criar VirtualDisplay", e)
-                stopProjectionInternal()
-                _connectionStatus.value = ConnectionStatus.ERROR
-                emitError(context.getString(R.string.error_unknown_connection))
-            }
-        }
-    }
-
-    fun stopProjection() {
-        externalScope.launch(Dispatchers.Main) {
-            stopProjectionInternal()
-            updateConnectionStatus()
-        }
-    }
-
-    private fun stopProjectionInternal() {
-        if (virtualDisplay != null) {
-            Log.d(TAG, "Liberando VirtualDisplay...")
-            virtualDisplay?.release()
-            virtualDisplay = null
-            Log.d(TAG, "VirtualDisplay liberado.")
-        }
-        if (mediaProjection != null) {
-            Log.i(TAG, "Parando MediaProjection...")
-            mediaProjection?.unregisterCallback(mediaProjectionCallback)
-            mediaProjection?.stop()
-            mediaProjection = null
-            _currentResolution.value = null
-            Log.i(TAG, "MediaProjection parado.")
-        }
-        if (_connectionStatus.value == ConnectionStatus.TRANSMITTING) {
-            Log.d(TAG, "Projeção parada internamente, status será reavaliado.")
-            // Não mudar o status aqui diretamente, deixar updateConnectionStatus fazer isso
-        }
-    }
-
-    // --- Callbacks ---
-    private val mediaProjectionCallback = object : MediaProjection.Callback() {
-        override fun onStop() {
-            Log.w(TAG, "MediaProjection parado externamente (Callback).")
-            externalScope.launch(Dispatchers.Main) {
-                stopProjectionInternal()
-                updateConnectionStatus()
-                // Emitir evento informativo?
-                // emitError("Transmissão interrompida.")
-            }
-        }
-    }
-
-    private val virtualDisplayCallback = object : VirtualDisplay.Callback() {
-        override fun onPaused() { Log.d(TAG, "VirtualDisplay pausado.") }
-        override fun onResumed() { Log.d(TAG, "VirtualDisplay retomado.") }
-        override fun onStopped() {
-            Log.w(TAG, "VirtualDisplay parado (Callback).")
-            externalScope.launch(Dispatchers.Main) {
-                stopProjectionInternal()
-                updateConnectionStatus()
-                emitError("Erro interno na exibição externa.")
-            }
-        }
-    }
+    // --- Media Projection Logic (REMOVIDA) ---
+    // fun createScreenCaptureIntent(): Intent { ... }
+    // fun startProjection(...) { ... }
+    // fun stopProjection() { ... }
+    // private fun stopProjectionInternal() { ... }
+    // private val mediaProjectionCallback = ...
+    // private val virtualDisplayCallback = ...
 
     // --- Cleanup ---
     fun cleanup() {
         Log.d(TAG, "Limpando ConnectionRepository...")
-        externalScope.launch(Dispatchers.Main) {
-            unregisterDisplayListener()
-            stopProjectionInternal()
-        }
+        unregisterDisplayListener()
+        unregisterUsbReceiver()
+        // Não precisamos mais parar projeção aqui
     }
 
     // --- Error Handling ---
@@ -356,8 +265,12 @@ class ConnectionRepository(
     }
 
     // --- USB Detection (Placeholder) ---
-    private suspend fun detectUsbAdapter(): Boolean = withContext(Dispatchers.IO) {
-        Log.w(TAG, "Detecção de adaptador USB ainda não implementada.")
-        return@withContext false
+    // A lógica básica está no receiver, refinar a verificação do dispositivo específico
+    private suspend fun isSpecificAdapterAttached(device: UsbDevice?): Boolean = withContext(Dispatchers.IO) {
+        if (device == null) return@withContext false
+        // TODO: Implementar verificação de Vendor ID (VID) e Product ID (PID)
+        // Exemplo: return device.vendorId == VENDOR_ID_HMASTON && device.productId == PRODUCT_ID_HMASTON
+        Log.w(TAG, "Verificação específica do adaptador H'Maston não implementada (VID/PID).")
+        return@withContext true // Assumir que qualquer dispositivo é o adaptador por enquanto
     }
 }

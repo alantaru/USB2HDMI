@@ -5,24 +5,20 @@
 
     <!--
          Permissões:
-         - FOREGROUND_SERVICE é provavelmente necessário para manter a MediaProjection
-           estável, especialmente em versões mais recentes do Android.
-           A permissão específica FOREGROUND_SERVICE_MEDIA_PROJECTION é adicionada
-           automaticamente pelo sistema quando targetSdk >= 29 e a projeção é iniciada.
+         - FOREGROUND_SERVICE é necessário para qualquer serviço de primeiro plano.
+         - FOREGROUND_SERVICE_MEDIA_PROJECTION é específico para projeção de mídia (Android 10+).
+           Declarar aqui garante compatibilidade e clareza.
          - A permissão para MediaProjection em si é solicitada em tempo de execução.
-         - Permissões USB seriam necessárias se usássemos UsbManager ativamente.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Se precisarmos de um serviço de projeção de mídia em primeiro plano (Android 14+) -->
-    <!-- <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" /> -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
 
     <!--
          Recursos de Hardware:
          - usb.host indica que o app PODE interagir com dispositivos USB host.
            required="false" significa que o app pode ser instalado mesmo sem suporte a host USB,
-           mas a funcionalidade relacionada pode não funcionar. Importante se a detecção
-           do adaptador via UsbManager for implementada como um fallback ou recurso adicional.
+           mas a funcionalidade relacionada pode não funcionar.
     -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
@@ -47,37 +43,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!--
-                 Opcional: Intent filter para tentar abrir o app quando um
-                 dispositivo HDMI é conectado via USB-C. A eficácia disso
-                 pode variar entre dispositivos/versões do Android.
-                 Requer testes cuidadosos.
-            -->
-            <!--
-            <intent-filter>
-                <action android:name="android.hardware.hdmi.action.HDMI_PLUGGED" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <intent-filter>
-                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
-            </intent-filter>
-            <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
-                       android:resource="@xml/device_filter" />
-            -->
+            <!-- Opcional: Intent filters para reagir a conexões -->
+            <!-- ... -->
 
         </activity>
 
-        <!--
-             Declaração de Serviço (se necessário):
-             Se a MediaProjection for executada em um Foreground Service para maior
-             estabilidade, ele seria declarado aqui.
-        -->
-        <!--
+        <!-- Declaração do Serviço de Projeção -->
         <service
             android:name=".service.ProjectionService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
-        -->
 
     </application>
 

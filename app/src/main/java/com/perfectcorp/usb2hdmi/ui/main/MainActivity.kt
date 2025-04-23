@@ -3,7 +3,7 @@ package com.perfectcorp.usb2hdmi.ui.main
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionManager // Import necessário para getSystemService
+import android.media.projection.MediaProjectionManager // Import necessário
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -51,21 +51,19 @@ class MainActivity : AppCompatActivity() {
     private val mediaProjectionPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             Log.d(TAG, "Resultado da permissão MediaProjection recebido: resultCode=${result.resultCode}")
+            // Usar Activity.RESULT_OK
             if (result.resultCode == Activity.RESULT_OK) {
-                // Permissão concedida, repassar resultado para ViewModel
                 result.data?.let { intent ->
                     viewModel.permissionResultReceived(result.resultCode, intent)
                 } ?: run {
-                    // Caso raro: resultado OK mas Intent nulo? Tratar como erro.
                     Log.e(TAG, "Resultado da permissão OK, mas Intent é nulo.")
-                    viewModel.permissionResultReceived(Activity.RESULT_CANCELED, null) // Informa VM sobre falha
-                    showErrorSnackbar(getString(R.string.error_failed_to_get_permission)) // Usar string resource
+                    viewModel.permissionResultReceived(Activity.RESULT_CANCELED, null)
+                    showErrorSnackbar(getString(R.string.error_failed_to_get_permission))
                 }
             } else {
-                // Permissão negada ou cancelada pelo usuário
                 Log.w(TAG, "Permissão MediaProjection negada ou cancelada.")
-                viewModel.permissionResultReceived(result.resultCode, null) // Informa VM sobre falha
-                showErrorSnackbar(getString(R.string.error_permission_needed)) // Usar string resource
+                viewModel.permissionResultReceived(result.resultCode, null)
+                showErrorSnackbar(getString(R.string.error_permission_needed))
             }
         }
 
@@ -76,29 +74,20 @@ class MainActivity : AppCompatActivity() {
         // Inicializar dependências (SUBSTITUIR POR HILT/DI)
         connectionRepository = ConnectionRepository(applicationContext, applicationScope)
         settingsRepository = SettingsRepository(applicationContext)
-        // Factory manual para ViewModel
-        val viewModelFactory = MainViewModelFactory(connectionRepository, settingsRepository)
+        // Factory manual para ViewModel - Passar applicationContext
+        val viewModelFactory = MainViewModelFactory(applicationContext, connectionRepository, settingsRepository)
         viewModel = ViewModelProvider(this, viewModelFactory)[MainViewModel::class.java]
 
 
-        // Inflar layout usando ViewBinding (preferível)
-        // binding = ActivityMainBinding.inflate(layoutInflater)
-        // setContentView(binding.root)
+        // Inflar layout
+        setContentView(R.layout.activity_main)
 
-        // Inflar layout usando findViewById (tradicional) - Requer activity_main.xml
-        setContentView(R.layout.activity_main) // Certifique-se que R foi importado corretamente
-
-        setupUIListeners() // Configurar listeners para botões, spinners, etc.
-        observeUiState() // Começar a observar o estado do ViewModel
+        setupUIListeners()
+        observeUiState()
     }
 
     private fun setupUIListeners() {
         Log.d(TAG, "Configurando listeners da UI...")
-        // Exemplo com ViewBinding:
-        // binding.buttonAction.setOnClickListener { handleActionButtonClick() }
-        // binding.spinnerResolution.onItemSelectedListener = object : AdapterView.OnItemSelectedListener { ... }
-
-        // Exemplo com findViewById (requer IDs no XML):
         findViewById<View>(R.id.buttonAction)?.setOnClickListener { handleActionButtonClick() }
         findViewById<android.widget.Spinner>(R.id.spinnerResolution)?.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -110,40 +99,40 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) { /* Não fazer nada */ }
         }
-
-        // Listener para limpar erro ao clicar no Snackbar (exemplo)
-        // (A implementação do Snackbar está em showErrorSnackbar)
     }
 
     private fun handleActionButtonClick() {
-        val status = viewModel.uiState.value.connectionStatus
-        Log.d(TAG, "Botão de ação clicado. Status atual: $status")
-        when (status) {
-            ConnectionStatus.READY_TO_TRANSMIT -> viewModel.startTransmissionRequest()
-            ConnectionStatus.TRANSMITTING -> viewModel.stopTransmissionRequest()
-            else -> Log.w(TAG, "Clique no botão de ação em estado inesperado: $status")
+        val uiState = viewModel.uiState.value // Obter estado atual
+        Log.d(TAG, "Botão de ação clicado. Status: ${uiState.connectionStatus}, isTransmitting (VM): ${uiState.isTransmitting}")
+
+        if (uiState.isTransmitting) {
+            // Se o ViewModel acha que está transmitindo, tentamos parar
+            viewModel.stopTransmissionRequest()
+        } else if (uiState.connectionStatus == ConnectionStatus.READY_TO_TRANSMIT) {
+            // Se não está transmitindo mas está pronto, tentamos iniciar
+            viewModel.startTransmissionRequest()
+        } else {
+            Log.w(TAG, "Clique no botão de ação em estado inesperado: ${uiState.connectionStatus}")
         }
     }
+
 
     private fun observeUiState() {
         Log.d(TAG, "Iniciando observação do UiState...")
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collectLatest { state ->
-                    Log.v(TAG, "Novo UiState recebido: $state") // Log verboso para debug
+                    Log.v(TAG, "Novo UiState recebido: $state")
                     updateUi(state)
 
-                    // Lançar pedido de permissão se necessário
                     if (state.requiresPermissionRequest) {
                         launchMediaProjectionRequest()
                     }
 
-                    // Mostrar erro se houver
                     state.errorMessage?.let { message ->
-                        // Usar string resource se for uma chave, senão usar a mensagem direta
                         val displayMessage = try { getString(resources.getIdentifier(message, "string", packageName)) } catch (e: Exception) { message }
                         showErrorSnackbar(displayMessage)
-                        viewModel.clearError() // Limpa o erro após mostrar
+                        viewModel.clearError()
                     }
                 }
             }
@@ -156,34 +145,30 @@ class MainActivity : AppCompatActivity() {
     private fun updateUi(state: UiState) {
         // --- Atualizar Indicador de Status ---
         findViewById<android.widget.TextView>(R.id.textViewStatus)?.text = getStatusString(state.connectionStatus)
-        // Atualizar ícone de status
         val statusIconResId = when (state.connectionStatus) {
             ConnectionStatus.DISCONNECTED -> R.drawable.ic_baseline_link_off_24
             ConnectionStatus.ADAPTER_CONNECTED -> R.drawable.ic_baseline_usb_24
-            ConnectionStatus.READY_TO_TRANSMIT -> R.drawable.ic_baseline_cast_connected_24 // Usar cast_connected para pronto também? Ou um ícone 'cast'?
-            ConnectionStatus.TRANSMITTING -> R.drawable.ic_baseline_cast_connected_24
+            ConnectionStatus.READY_TO_TRANSMIT -> R.drawable.ic_baseline_cast_connected_24 // Ícone de pronto
+            ConnectionStatus.TRANSMITTING -> R.drawable.ic_baseline_cast_connected_24 // Mesmo ícone para transmitindo?
             ConnectionStatus.ERROR -> R.drawable.ic_baseline_error_24
         }
         findViewById<ImageView>(R.id.imageViewStatusIcon)?.setImageResource(statusIconResId)
 
 
         // --- Atualizar Informações da Tela Externa ---
-        val showExternalInfo = state.isTransmitting && state.currentResolution != null
-        findViewById<View>(R.id.layoutExternalInfo)?.isVisible = showExternalInfo
-        if (showExternalInfo) {
-            findViewById<android.widget.TextView>(R.id.textViewCurrentResolution)?.text = state.currentResolution.toString()
-        }
+        findViewById<View>(R.id.layoutExternalInfo)?.isVisible = false // Oculto por enquanto
 
         // --- Atualizar Botão de Ação ---
         findViewById<android.widget.Button>(R.id.buttonAction)?.apply {
-            isEnabled = state.isActionButtonEnabled
+            isEnabled = state.connectionStatus == ConnectionStatus.READY_TO_TRANSMIT || state.isTransmitting
             text = if (state.isTransmitting) getString(R.string.action_stop_transmission) else getString(R.string.action_start_transmission)
         }
 
 
         // --- Atualizar Seletor de Resolução ---
-        val showSelector = state.showResolutionSelector
-        findViewById<View>(R.id.textViewResolutionLabel)?.isVisible = showSelector // Mostrar/ocultar label também
+        val showSelector = state.availableResolutions.isNotEmpty() &&
+                           (state.connectionStatus == ConnectionStatus.READY_TO_TRANSMIT || state.isTransmitting)
+        findViewById<View>(R.id.textViewResolutionLabel)?.isVisible = showSelector
         findViewById<android.widget.Spinner>(R.id.spinnerResolution)?.isVisible = showSelector
         if (showSelector) {
             updateResolutionSpinner(state.availableResolutions, state.selectedResolution)
@@ -192,11 +177,11 @@ class MainActivity : AppCompatActivity() {
         // --- Atualizar Indicador de Loading ---
         findViewById<android.widget.ProgressBar>(R.id.progressBar)?.isVisible = state.isLoading
 
-        // --- Atualizar Mensagem de Texto Auxiliar (Opcional) ---
-        val helperMessage = getHelperMessage(state.connectionStatus) // Obter mensagem auxiliar
+        // --- Atualizar Mensagem de Texto Auxiliar ---
+        val helperMessage = getHelperMessage(state.connectionStatus)
         findViewById<android.widget.TextView>(R.id.textViewMessage)?.apply {
             text = helperMessage
-            isVisible = !state.isLoading && state.errorMessage == null && helperMessage.isNotEmpty() // Mostrar se não estiver carregando, sem erro e com mensagem
+            isVisible = !state.isLoading && state.errorMessage == null && helperMessage.isNotEmpty()
         }
     }
 
@@ -205,18 +190,16 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateResolutionSpinner(resolutions: List<Resolution>, selectedResolution: Resolution?) {
         val spinner = findViewById<android.widget.Spinner>(R.id.spinnerResolution) ?: return
-        // Usar um ArrayAdapter simples para exibir o toString() da Resolution
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, resolutions).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
         spinner.adapter = adapter
 
-        // Definir a seleção atual
         selectedResolution?.let { selected ->
             val position = resolutions.indexOf(selected)
             if (position >= 0 && spinner.selectedItemPosition != position) {
                  Log.d(TAG, "Definindo seleção do Spinner para: $selected (posição $position)")
-                 spinner.setSelection(position, false) // false para não disparar onItemSelected
+                 spinner.setSelection(position, false)
             }
         }
     }
@@ -228,12 +211,13 @@ class MainActivity : AppCompatActivity() {
     private fun launchMediaProjectionRequest() {
         Log.i(TAG, "Lançando solicitação de permissão MediaProjection...")
         try {
-            // Obter o intent do repositório para garantir consistência
-            val intent = connectionRepository.createScreenCaptureIntent()
+            // CORRIGIDO: Obter o manager e criar o intent aqui
+            val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val intent = mediaProjectionManager.createScreenCaptureIntent()
              mediaProjectionPermissionLauncher.launch(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Erro ao tentar lançar MediaProjection Intent", e)
-            showErrorSnackbar(getString(R.string.error_failed_start_projection_request)) // Usar string resource
+            showErrorSnackbar(getString(R.string.error_failed_start_projection_request))
             viewModel.permissionResultReceived(Activity.RESULT_CANCELED, null) // Simula cancelamento
         }
     }
@@ -281,20 +265,22 @@ class MainActivity : AppCompatActivity() {
         if (!isChangingConfigurations) {
              Log.d(TAG, "Cancelando applicationScope...")
              applicationScope.cancel()
-             // A limpeza do repositório é chamada no onCleared do ViewModel
+             // ViewModel limpa o repositório
         }
     }
 }
 
 // Factory manual para MainViewModel (SUBSTITUIR POR HILT/DI)
 class MainViewModelFactory(
+    private val context: Context, // Adicionado contexto
     private val connectionRepository: ConnectionRepository,
     private val settingsRepository: SettingsRepository
 ) : ViewModelProvider.Factory {
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return MainViewModel(connectionRepository, settingsRepository) as T
+            // Passar contexto para o ViewModel
+            return MainViewModel(context, connectionRepository, settingsRepository) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
