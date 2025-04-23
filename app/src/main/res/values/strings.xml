@@ -1,0 +1,33 @@
+<resources>
+    <!-- Nome do Aplicativo -->
+    <string name="app_name">USB2HDMI Perfeito</string>
+
+    <!-- Strings de Status (MainActivity & Layout) -->
+    <string name="status_disconnected">Desconectado</string>
+    <string name="status_adapter_connected">Adaptador Conectado</string>
+    <string name="status_ready_to_transmit">Pronto para Transmitir</string>
+    <string name="status_transmitting">Transmitindo</string>
+    <string name="status_error">Erro na Conexão</string>
+
+    <!-- Textos de Botões (MainActivity & Layout) -->
+    <string name="action_start_transmission">Iniciar Transmissão</string>
+    <string name="action_stop_transmission">Parar Transmissão</string>
+
+    <!-- Labels (Layout) -->
+    <string name="label_external_resolution">Resolução Externa:</string>
+    <string name="label_select_resolution">Selecionar Resolução:</string>
+
+    <!-- Content Descriptions (Layout - Acessibilidade) -->
+    <string name="cd_connection_status_icon">Ícone de status da conexão</string>
+
+    <!-- Mensagens para o Usuário (MainActivity - Snackbar/Toast) -->
+    <string name="error_permission_needed">Permissão de captura de tela é necessária para transmitir.</string>
+    <string name="error_failed_to_get_permission">Falha ao obter permissão de captura de tela.</string>
+    <string name="error_failed_start_projection_request">Não foi possível iniciar a solicitação de captura de tela.</string>
+    <string name="error_unknown_connection">Erro desconhecido na conexão</string> <!-- Usado no ViewModel -->
+
+    <!-- Mensagens Auxiliares (Layout - Opcional) -->
+    <string name="message_connect_adapter">Conecte o adaptador USB-C.</string>
+    <string name="message_connect_hdmi">Conecte um monitor HDMI ao adaptador.</string>
+
+</resources>

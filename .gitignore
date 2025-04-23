@@ -1,0 +1,31 @@
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (contains SDK path)
+local.properties
+
+# IDE files (Android Studio, IntelliJ)
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+
+# Keystore files
+*.jks
+*.keystore
+
+# Log files
+*.log
+
+# Captures (for testing)
+captures/
+
+# Generated files
+generated/
+
+# Misc
+.cxx/
+*~
+*.swp

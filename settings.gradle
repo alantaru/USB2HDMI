@@ -1,0 +1,24 @@
+// Define os repositórios onde o Gradle procura por plugins
+pluginManagement {
+    repositories {
+        google() // Repositório Maven do Google (essencial para plugins Android)
+        mavenCentral() // Repositório Central Maven
+        gradlePluginPortal() // Portal de Plugins do Gradle
+    }
+}
+
+// Define os repositórios onde o Gradle procura por dependências (bibliotecas)
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS) // Boa prática: definir repositórios apenas aqui
+    repositories {
+        google() // Repositório Maven do Google (essencial para bibliotecas AndroidX)
+        mavenCentral() // Repositório Central Maven
+        // Outros repositórios, como JitPack, podem ser adicionados aqui se necessário
+        // maven { url 'https://jitpack.io' }
+    }
+}
+
+// Define o nome do projeto raiz
+rootProject.name = "USB2HDMI"
+// Inclui o módulo 'app' no build
+include ':app'

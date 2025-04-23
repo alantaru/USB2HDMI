@@ -1,0 +1,96 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.android)
+    id("kotlin-parcelize") // ADICIONADO: Para @Parcelize
+    // Adicione Hilt aqui se for usar:
+    // alias(libs.plugins.hilt)
+    // id("kotlin-kapt") // Necessário para Hilt
+}
+
+android {
+    namespace = "com.perfectcorp.usb2hdmi" // Ajuste conforme necessário
+    compileSdk = 34
+    compileSdkPreview = null // ADICIONADO: Garantir que não use preview
+
+    defaultConfig {
+        applicationId = "com.perfectcorp.usb2hdmi" // Ajuste conforme necessário
+        minSdk = 34
+        targetSdk = 34 // CORRIGIDO: Apenas aqui dentro
+        versionCode = 1
+        versionName = "1.0.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // Assinatura de release seria configurada aqui
+        }
+        debug {
+            minifyEnabled = false
+            applicationIdSuffix = ".debug" // Sufixo para debug builds
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8 // Ou mais recente se necessário
+        targetCompatibility = JavaVersion.VERSION_1_8 // Ou mais recente se necessário
+    }
+    kotlinOptions {
+        jvmTarget = "1.8" // Ou mais recente se necessário
+    }
+    buildFeatures {
+        // viewBinding = true // Descomente se for usar ViewBinding
+        // dataBinding = true // Descomente se for usar DataBinding
+        buildConfig = true // Permite gerar BuildConfig.java
+    }
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}" // Exclusões comuns
+        }
+    }
+}
+
+dependencies {
+
+    // compileOnly files('/usr/local/lib/android-sdk/platforms/android-34/android.jar') // REMOVIDO
+
+    // Core Android & Kotlin
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material) // Material Design 3 Components
+    implementation(libs.androidx.constraintlayout) // Para layouts complexos (opcional se usar Compose)
+    implementation(libs.androidx.activity.ktx) // Extensões KTX para Activity
+
+    // Lifecycle (ViewModel, LiveData/StateFlow)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx) // Necessário para lifecycleScope
+    implementation(libs.androidx.lifecycle.livedata.ktx) // Se usar LiveData
+
+    // Coroutines
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Testes
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+
+    // Hilt (se usar Injeção de Dependência)
+    // implementation(libs.hilt.android)
+    // kapt(libs.hilt.compiler)
+
+    // DataStore (para SettingsRepository)
+    implementation(libs.androidx.datastore.preferences) // DESCOMENTADO
+}
+
+// Necessário para Hilt
+// kapt {
+//     correctErrorTypes = true
+// }
