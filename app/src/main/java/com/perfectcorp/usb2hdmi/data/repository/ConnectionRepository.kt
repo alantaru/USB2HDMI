@@ -156,10 +156,10 @@ class ConnectionRepository(
          externalScope.launch(Dispatchers.IO) {
              val deviceList = usbManager.deviceList
              val adapterAttached = deviceList.values.any { isSpecificAdapterAttachedBlocking(it) }
-             var statusChanged = false
+             var statusChanged = false // Variável não utilizada, pode ser removida
              if (adapterAttached != isUsbDeviceAttached) {
                  isUsbDeviceAttached = adapterAttached
-                 statusChanged = true
+                 // statusChanged = true // Não é usada
              }
              Log.d(TAG, "Estado inicial USB verificado: isUsbDeviceAttached=$isUsbDeviceAttached")
              updateConnectionStatus()
