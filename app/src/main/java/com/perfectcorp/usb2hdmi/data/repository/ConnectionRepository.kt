@@ -36,6 +36,7 @@ import kotlinx.coroutines.withContext
 private const val TAG = "ConnectionRepository"
 private const val DEFAULT_DISPLAY_ID = 0 // WORKAROUND
 private const val POLLING_INTERVAL_MS = 2000L
+private const val USB_ATTACH_DELAY_MS = 1000L // Atraso após USB attach
 
 @SuppressLint("WrongConstant")
 class ConnectionRepository(
@@ -111,16 +112,22 @@ class ConnectionRepository(
                 val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
                 Log.i(TAG, "*** UsbReceiver: onReceive(action=$action, device=${device?.deviceName}, VID=${device?.vendorId}, PID=${device?.productId})")
 
-                var shouldUpdate = false
+                var needsStatusUpdate = false
                 when (action) {
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                         if (isSpecificAdapterAttachedBlocking(device)) {
                             Log.i(TAG, "Adaptador USB específico conectado.")
                             if (!isUsbDeviceAttached) {
                                 isUsbDeviceAttached = true
-                                shouldUpdate = true
+                                needsStatusUpdate = true // Precisa atualizar se o estado mudou
                             }
-                            shouldUpdate = true
+                            // Lançar coroutine para atrasar a verificação do display
+                            externalScope.launch {
+                                Log.d(TAG, "Atrasando verificação de display após USB attach por ${USB_ATTACH_DELAY_MS}ms...")
+                                delay(USB_ATTACH_DELAY_MS)
+                                Log.d(TAG, "Atraso concluído, chamando updateConnectionStatus.")
+                                updateConnectionStatus()
+                            }
                         } else {
                             Log.d(TAG, "Outro dispositivo USB conectado, ignorando.")
                         }
@@ -130,14 +137,15 @@ class ConnectionRepository(
                              Log.i(TAG, "Adaptador USB específico desconectado.")
                              if (isUsbDeviceAttached) {
                                  isUsbDeviceAttached = false
-                                 shouldUpdate = true
+                                 needsStatusUpdate = true // Precisa atualizar se o estado mudou
                              }
                         } else {
                              Log.d(TAG, "Outro dispositivo USB desconectado, ignorando.")
                         }
                     }
                 }
-                if (shouldUpdate) {
+                // Atualizar imediatamente apenas se o dispositivo foi desconectado
+                if (action == UsbManager.ACTION_USB_DEVICE_DETACHED && needsStatusUpdate) {
                     updateConnectionStatus()
                 }
             }
@@ -156,12 +164,13 @@ class ConnectionRepository(
          externalScope.launch(Dispatchers.IO) {
              val deviceList = usbManager.deviceList
              val adapterAttached = deviceList.values.any { isSpecificAdapterAttachedBlocking(it) }
-             var statusChanged = false // Variável não utilizada, pode ser removida
+             var needsUpdate = false
              if (adapterAttached != isUsbDeviceAttached) {
                  isUsbDeviceAttached = adapterAttached
-                 // statusChanged = true // Não é usada
+                 needsUpdate = true
              }
              Log.d(TAG, "Estado inicial USB verificado: isUsbDeviceAttached=$isUsbDeviceAttached")
+             // Sempre chamar update após verificação inicial
              updateConnectionStatus()
          }
      }
@@ -185,37 +194,41 @@ class ConnectionRepository(
             try {
                 val displays = displayManager.displays
                 Log.i(TAG, "------ Displays Atuais (${displays.size}) ------")
+                var foundPotentialExternal = false
                 displays.forEach { display ->
                     Log.i(TAG, "  Display ID: ${display.displayId}")
                     Log.i(TAG, "    Name: ${display.name}")
                     Log.i(TAG, "    isValid: ${display.isValid}")
-                    // REMOVIDO: Log.i(TAG, "    State: ${Display.stateToString(display.state)}")
-                    // REMOVIDO: Log.i(TAG, "    Flags: ${Display.flagsToString(display.flags)}")
-                    // REMOVIDO: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { Log.i(TAG, "    Type: ${display.type}") }
+                    // Logs problemáticos removidos
                     try {
                         val mode = display.mode
                         Log.i(TAG, "    Mode: ${mode.physicalWidth}x${mode.physicalHeight}@${mode.refreshRate.toInt()}Hz (Mode ID: ${mode.modeId})")
                     } catch (e: Exception) {
                         Log.w(TAG, "    Mode: Erro ao obter modo (${e.message})")
                     }
+                    // Lógica de detecção aprimorada
+                    if (display.displayId != DEFAULT_DISPLAY_ID && display.isValid) {
+                        Log.i(TAG,"    >> Potencial display externo encontrado (ID != 0 e isValid=true)")
+                        foundPotentialExternal = true
+                        // Logar flags se disponíveis
+                        // Log.i(TAG, "    Flags: ${Display.flagsToString(display.flags)}")
+                        // if ((display.flags and Display.FLAG_PRESENTATION) != 0) {
+                        //    Log.i(TAG,"    >> E tem a flag FLAG_PRESENTATION!")
+                        // }
+                    }
                 }
                 Log.i(TAG, "------------------------------------")
-
-                val externalDisplay = displays.find {
-                    it.displayId != DEFAULT_DISPLAY_ID &&
-                    it.isValid &&
-                    (it.flags and Display.FLAG_PRESENTATION) != 0
-                }
 
                 val currentStatus = _connectionStatus.value
                 val newStatus: ConnectionStatus
 
-                if (externalDisplay != null) {
-                    Log.i(TAG, "Monitor externo VÁLIDO (PRESENTATION) detectado: ID=${externalDisplay.displayId}")
-                    updateAvailableResolutions(externalDisplay)
+                if (foundPotentialExternal) {
+                    Log.i(TAG, "Conclusão: Monitor externo POTENCIALMENTE detectado.")
+                    val firstExternal = displays.firstOrNull { it.displayId != DEFAULT_DISPLAY_ID && it.isValid }
+                    firstExternal?.let { updateAvailableResolutions(it) }
                     newStatus = ConnectionStatus.READY_TO_TRANSMIT
                 } else {
-                    Log.d(TAG, "Nenhum monitor externo válido (PRESENTATION) detectado.")
+                    Log.d(TAG, "Nenhum monitor externo válido detectado na verificação.")
                     if (isUsbDeviceAttached) {
                          Log.d(TAG, "Adaptador USB detectado, mas sem monitor externo válido.")
                          newStatus = ConnectionStatus.ADAPTER_CONNECTED
